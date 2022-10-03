@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment-nginx
+spec:
+# Достаточно 2 реплики если смотреть в сторону отказаустойчисти, при необходимости сам заскейлиться до 4х
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      affinity:
+  # применяем правило чтобы избежать размещения двух похожих подов вместе
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: pod_group_affinity
+                  operator: In
+                  values:
+                  - nginx
+              topologyKey: "topology.kubernetes.io/zone"
+      containers:
+      - name: nginx
+        image: nginx:1.23.1
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            port: 80
+            scheme: HTTP
+# Условие что подс поднимиться за 10 секунд, проверять будет по http get на 80 порт.
+          initialDelaySeconds: 10
+          periodSeconds: 2
+          successThreshold: 1
+          timeoutSeconds: 3
+        ports:
+        - containerPort: 80
+          name: nginx-http
+          protocol: TCP
+        resources:
+# Условие по итогу тестирования
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+# Предельное значение ресурсов для пода
+          limits:
+            memory: "256Mi"
+            cpu: "1"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: nginx
+  name: nginx
+spec:
+  ports:
+  - name: nginx-http
+    port: 80
+    protocol: TCP
+    targetPort: nginx-http
+  selector:
+    app: nginx
+  sessionAffinity: None
+  type: ClusterIP
+
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx
+spec:
+# Обьект для скейла
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx
+# Оставляем тот минимум который был при запуске
+  minReplicas: 2
+# При нагрузке повышаем  
+  maxReplicas: 4
+# Метрики за которым будет следить hpa
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+      #Пограничное значение утилизации cpu
+        type: Utilization
+        averageUtilization: 101
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: AverageValue
+        averageValue: 1000Mi
